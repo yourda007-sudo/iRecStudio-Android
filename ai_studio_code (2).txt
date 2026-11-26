@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">iRec Studio</string>
+    <string name="accessibility_service_desc">Detects browser apps to animate the Dynamic Island privacy dot</string>
+</resources>
