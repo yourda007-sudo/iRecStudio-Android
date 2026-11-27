@@ -20,7 +20,34 @@ jobs:
 
       - name: Generate Android Project Structure
         run: |
-          mkdir -p app/src/main/res/values app/src/main/res/xml app/src/main/java/com/irecstudio/state app/src/main/java/com/irecstudio/ui app/src/main/java/com/irecstudio/service
+          mkdir -p app/src/main/res/values app/src/main/res/xml app/src/main/res/drawable app/src/main/res/drawable-nodpi app/src/main/java/com/irecstudio/state app/src/main/java/com/irecstudio/ui app/src/main/java/com/irecstudio/service
+
+          shopt -s nullglob
+          pngs=(*.png)
+          jpgs=(*.jpg *.jpeg)
+          if [ -f "icon.png" ]; then
+            cp "icon.png" app/src/main/res/drawable-nodpi/app_icon.png
+          elif [ -f "icon.jpg" ]; then
+            cp "icon.jpg" app/src/main/res/drawable-nodpi/app_icon.jpg
+          elif [ -f "icon.jpeg" ]; then
+            cp "icon.jpeg" app/src/main/res/drawable-nodpi/app_icon.jpg
+          elif [ ${#pngs[@]} -gt 0 ]; then
+            cp "${pngs[0]}" app/src/main/res/drawable-nodpi/app_icon.png
+          elif [ ${#jpgs[@]} -gt 0 ]; then
+            cp "${jpgs[0]}" app/src/main/res/drawable-nodpi/app_icon.jpg
+          else
+            cat << 'EOF' > app/src/main/res/drawable/app_icon.xml
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp"
+              android:height="108dp"
+              android:viewportWidth="108"
+              android:viewportHeight="108">
+              <path android:fillColor="#090A0F" android:pathData="M0,0h108v108h-108z" />
+              <path android:fillColor="#FF3B30" android:pathData="M54,54m-28,0a28,28 0,1 1,56 0a28,28 0,1 1,-56 0" />
+              <path android:fillColor="#FFFFFF" android:pathData="M54,54m-11,0a11,11 0,1 1,22 0a11,11 0,1 1,-22 0" />
+          </vector>
+          EOF
+          fi
 
           cat << 'EOF' > settings.gradle.kts
           pluginManagement {
@@ -71,8 +98,8 @@ jobs:
                   applicationId = "com.irecstudio"
                   minSdk = 29
                   targetSdk = 34
-                  versionCode = 1
-                  versionName = "1.0"
+                  versionCode = 2
+                  versionName = "2.0"
               }
 
               buildTypes {
@@ -110,7 +137,7 @@ jobs:
           cat << 'EOF' > app/src/main/res/values/strings.xml
           <resources>
               <string name="app_name">iRec Studio</string>
-              <string name="accessibility_service_desc">Detects browser apps to animate the Dynamic Island privacy dot</string>
+              <string name="accessibility_service_desc">Detects browser apps to animate the Dynamic Island mic dot</string>
           </resources>
           EOF
 
@@ -122,7 +149,7 @@ jobs:
               android:accessibilityFlags="flagDefault"
               android:canRetrieveWindowContent="false"
               android:description="@string/accessibility_service_desc"
-              android:notificationTimeout="100" />
+              android:notificationTimeout="80" />
           EOF
 
           cat << 'EOF' > app/src/main/AndroidManifest.xml
@@ -139,7 +166,8 @@ jobs:
 
               <application
                   android:allowBackup="true"
-                  android:icon="@android:drawable/sym_def_app_icon"
+                  android:icon="@drawable/app_icon"
+                  android:roundIcon="@drawable/app_icon"
                   android:label="@string/app_name"
                   android:theme="@android:style/Theme.Material.NoActionBar">
 
@@ -193,13 +221,23 @@ jobs:
               val overlayRunning: Boolean = false,
               val showIsland: Boolean = true,
               val showStatusBar: Boolean = true,
+              val topEdgeFullWidth: Boolean = false,
               val isRecording: Boolean = false,
+              val isPaused: Boolean = false,
               val elapsedSeconds: Int = 0,
               val micEnabled: Boolean = true,
               val isBrowserActive: Boolean = false,
+              val forceBrowserPreview: Boolean = false,
+              val airplaneMode: Boolean = false,
+              val cellularData: Boolean = true,
               val wifiOn: Boolean = true,
-              val batteryLevel: Int = 85,
+              val bluetooth: Boolean = false,
+              val hotspot: Boolean = false,
+              val doNotDisturb: Boolean = false,
+              val location: Boolean = false,
+              val lowPowerMode: Boolean = false,
               val showBatteryPercent: Boolean = false,
+              val batteryLevel: Int = 85,
               val expanded: Boolean = false
           )
 
@@ -208,17 +246,32 @@ jobs:
               val state: StateFlow<OverlayUiState> = _state.asStateFlow()
 
               var onStopRecordingRequested: (() -> Unit)? = null
+              var onPauseResumeRequested: (() -> Unit)? = null
 
               fun setOverlayRunning(running: Boolean) = _state.update { it.copy(overlayRunning = running) }
               fun toggleIsland() = _state.update { it.copy(showIsland = !it.showIsland) }
               fun toggleStatusBar() = _state.update { it.copy(showStatusBar = !it.showStatusBar) }
+              fun toggleTopEdge() = _state.update { it.copy(topEdgeFullWidth = !it.topEdgeFullWidth) }
               fun toggleMic() = _state.update { it.copy(micEnabled = !it.micEnabled) }
-              fun toggleWifi() = _state.update { it.copy(wifiOn = !it.wifiOn) }
+              fun toggleBrowserPreview() = _state.update { it.copy(forceBrowserPreview = !it.forceBrowserPreview) }
+              fun toggleAirplane() = _state.update {
+                  val next = !it.airplaneMode
+                  it.copy(airplaneMode = next, cellularData = if (next) false else true, wifiOn = !next)
+              }
+              fun toggleCellular() = _state.update { it.copy(cellularData = !it.cellularData, airplaneMode = false) }
+              fun toggleWifi() = _state.update { it.copy(wifiOn = !it.wifiOn, airplaneMode = false) }
+              fun toggleBluetooth() = _state.update { it.copy(bluetooth = !it.bluetooth) }
+              fun toggleHotspot() = _state.update { it.copy(hotspot = !it.hotspot, airplaneMode = false) }
+              fun toggleDnd() = _state.update { it.copy(doNotDisturb = !it.doNotDisturb) }
+              fun toggleLocation() = _state.update { it.copy(location = !it.location) }
+              fun toggleLowPower() = _state.update { it.copy(lowPowerMode = !it.lowPowerMode) }
               fun toggleBatteryPercent() = _state.update { it.copy(showBatteryPercent = !it.showBatteryPercent) }
               fun toggleExpanded() = _state.update { it.copy(expanded = !it.expanded) }
+              fun setExpanded(v: Boolean) = _state.update { it.copy(expanded = v) }
               fun setBrowserActive(active: Boolean) = _state.update { it.copy(isBrowserActive = active) }
+              fun setPaused(paused: Boolean) = _state.update { it.copy(isPaused = paused) }
               fun setRecording(recording: Boolean, elapsed: Int = 0) = _state.update {
-                  it.copy(isRecording = recording, elapsedSeconds = elapsed)
+                  it.copy(isRecording = recording, isPaused = false, elapsedSeconds = elapsed)
               }
               fun updateElapsed(seconds: Int) = _state.update { it.copy(elapsedSeconds = seconds) }
               fun updateBattery(level: Int) = _state.update { it.copy(batteryLevel = level.coerceIn(1, 100)) }
@@ -230,12 +283,18 @@ jobs:
 
           import androidx.compose.animation.AnimatedVisibility
           import androidx.compose.animation.animateColorAsState
-          import androidx.compose.animation.core.Spring
-          import androidx.compose.animation.core.animateDpAsState
-          import androidx.compose.animation.core.spring
+          import androidx.compose.animation.core.*
+          import androidx.compose.animation.expandVertically
+          import androidx.compose.animation.fadeIn
+          import androidx.compose.animation.fadeOut
+          import androidx.compose.animation.shrinkVertically
+          import androidx.compose.animation.scaleIn
+          import androidx.compose.animation.scaleOut
+          import androidx.compose.foundation.Canvas
           import androidx.compose.foundation.background
           import androidx.compose.foundation.border
           import androidx.compose.foundation.clickable
+          import androidx.compose.foundation.interaction.MutableInteractionSource
           import androidx.compose.foundation.layout.*
           import androidx.compose.foundation.shape.CircleShape
           import androidx.compose.foundation.shape.RoundedCornerShape
@@ -244,7 +303,16 @@ jobs:
           import androidx.compose.ui.Alignment
           import androidx.compose.ui.Modifier
           import androidx.compose.ui.draw.clip
+          import androidx.compose.ui.draw.shadow
+          import androidx.compose.ui.geometry.CornerRadius
+          import androidx.compose.ui.geometry.Offset
+          import androidx.compose.ui.geometry.Size
+          import androidx.compose.ui.graphics.Brush
           import androidx.compose.ui.graphics.Color
+          import androidx.compose.ui.graphics.Path
+          import androidx.compose.ui.graphics.StrokeCap
+          import androidx.compose.ui.graphics.TransformOrigin
+          import androidx.compose.ui.graphics.drawscope.Stroke
           import androidx.compose.ui.text.font.FontWeight
           import androidx.compose.ui.unit.dp
           import androidx.compose.ui.unit.sp
@@ -255,7 +323,7 @@ jobs:
           import kotlinx.coroutines.delay
 
           @Composable
-          fun DynamicStatusOverlay(state: OverlayUiState) {
+          fun DynamicStatusOverlay(state: OverlayUiState, isPreview: Boolean = false) {
               if (!state.showIsland && !state.showStatusBar && !state.isRecording) return
 
               var clockText by remember { mutableStateOf("") }
@@ -263,16 +331,16 @@ jobs:
                   val fmt = SimpleDateFormat("h:mm", Locale.US)
                   while (true) {
                       clockText = fmt.format(Date())
-                      delay(10_000)
+                      delay(5_000)
                   }
               }
 
-              val micOutside = state.isRecording && state.isBrowserActive
-              val statusBg by animateColorAsState(
-                  targetValue = if (micOutside) Color(0xFFF2F3F6) else Color(0xFF0A0C12),
-                  label = "statusBg"
+              val micOutside = (state.isRecording && state.isBrowserActive) || state.forceBrowserPreview
+              val fgColor by animateColorAsState(
+                  targetValue = if (micOutside) Color(0xFF0F172A) else Color.White,
+                  animationSpec = tween(250),
+                  label = "fg"
               )
-              val fgColor = if (micOutside) Color(0xFF0F172A) else Color.White
 
               val timerText = remember(state.elapsedSeconds) {
                   val m = state.elapsedSeconds / 60
@@ -280,51 +348,95 @@ jobs:
                   String.format(Locale.US, "%02d:%02d", m, s)
               }
 
+              val inf = rememberInfiniteTransition(label = "pulse")
+              val pulseAlpha by inf.animateFloat(
+                  initialValue = 1f,
+                  targetValue = 0.35f,
+                  animationSpec = infiniteRepeatable(tween(650), RepeatMode.Reverse),
+                  label = "pulseAlpha"
+              )
+
+              val fullWidth = state.topEdgeFullWidth && !isPreview
+              val pillBrush = if (micOutside) {
+                  Brush.linearGradient(listOf(Color(0xFFF2F3F6), Color(0xFFF2F3F6)))
+              } else {
+                  Brush.linearGradient(listOf(Color(0xFF2B3348), Color(0xFF3E394B), Color(0xFF252C3D)))
+              }
+
               Column(
-                  modifier = Modifier.fillMaxWidth(),
+                  modifier = Modifier
+                      .fillMaxWidth()
+                      .padding(horizontal = if (fullWidth) 0.dp else 10.dp),
                   horizontalAlignment = Alignment.CenterHorizontally
               ) {
                   if (state.showStatusBar) {
+                      val shape = if (fullWidth) RoundedCornerShape(0.dp) else RoundedCornerShape(28.dp)
                       Box(
                           modifier = Modifier
-                              .fillMaxWidth()
-                              .heightIn(min = 42.dp)
-                              .background(statusBg)
-                              .padding(horizontal = 16.dp, vertical = 6.dp)
+                              .then(if (fullWidth) Modifier.fillMaxWidth() else Modifier.widthIn(max = 420.dp).fillMaxWidth())
+                              .height(if (fullWidth) 46.dp else 54.dp)
+                              .shadow(if (fullWidth) 2.dp else 14.dp, shape)
+                              .clip(shape)
+                              .background(pillBrush)
+                              .padding(horizontal = 16.dp)
                       ) {
+                          // Left: iPhone Clock / Timer + DND + Location
                           Row(
                               modifier = Modifier
                                   .align(Alignment.CenterStart)
-                                  .clickable { OverlayStateHolder.toggleExpanded() },
+                                  .clickable(
+                                      interactionSource = remember { MutableInteractionSource() },
+                                      indication = null
+                                  ) { OverlayStateHolder.toggleExpanded() }
+                                  .padding(start = 6.dp),
                               verticalAlignment = Alignment.CenterVertically,
-                              horizontalArrangement = Arrangement.spacedBy(6.dp)
+                              horizontalArrangement = Arrangement.spacedBy(5.dp)
                           ) {
                               if (!state.showIsland && state.isRecording) {
                                   Box(
                                       modifier = Modifier
                                           .size(8.dp)
                                           .clip(CircleShape)
-                                          .background(Color(0xFFFF3B30))
+                                          .background(
+                                              if (state.isPaused) Color(0xFFFF9F0A)
+                                              else Color(0xFFFF3B30).copy(alpha = pulseAlpha)
+                                          )
                                   )
                               }
                               Text(
                                   text = if (state.isRecording) timerText else clockText,
                                   color = fgColor,
-                                  fontSize = 14.sp,
-                                  fontWeight = FontWeight.SemiBold
+                                  fontSize = 15.sp,
+                                  fontWeight = FontWeight.SemiBold,
+                                  letterSpacing = (-0.3).sp
                               )
-                          }
-
-                          if (state.showIsland) {
-                              Box(modifier = Modifier.align(Alignment.Center)) {
-                                  IslandPill(state = state, micOutside = micOutside)
+                              if (state.doNotDisturb) {
+                                  IosMoonIcon(fgColor)
+                              }
+                              if (state.location) {
+                                  IosLocationIcon(fgColor)
                               }
                           }
 
+                          // Center: Pitch-Black Dynamic Island Pill
+                          if (state.showIsland) {
+                              Box(modifier = Modifier.align(Alignment.Center)) {
+                                  IslandPill(
+                                      state = state,
+                                      micOutside = micOutside,
+                                      pulseAlpha = if (state.isRecording && !state.isPaused) pulseAlpha else 1f,
+                                      standalone = false
+                                  )
+                              }
+                          }
+
+                          // Right: iPhone Vector Icons (Signal + Wi-Fi + Battery)
                           Row(
-                              modifier = Modifier.align(Alignment.CenterEnd),
+                              modifier = Modifier
+                                  .align(Alignment.CenterEnd)
+                                  .padding(end = 2.dp),
                               verticalAlignment = Alignment.CenterVertically,
-                              horizontalArrangement = Arrangement.spacedBy(8.dp)
+                              horizontalArrangement = Arrangement.spacedBy(5.dp)
                           ) {
                               if (!state.showIsland && state.micEnabled) {
                                   Box(
@@ -334,87 +446,317 @@ jobs:
                                           .background(Color(0xFFFF9F0A))
                                   )
                               }
-                              if (state.wifiOn) {
-                                  Text(text = "Wi-Fi", color = fgColor, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                              if (state.airplaneMode) {
+                                  Text("✈", color = fgColor, fontSize = 12.sp)
+                              } else if (!micOutside) {
+                                  IosSignalIcon(color = fgColor, active = state.cellularData)
                               }
-                              Box(
-                                  modifier = Modifier
-                                      .border(1.2.dp, fgColor.copy(alpha = 0.65f), RoundedCornerShape(4.dp))
-                                      .padding(horizontal = 5.dp, vertical = 1.dp)
-                              ) {
-                                  Text(
-                                      text = if (state.showBatteryPercent) "${state.batteryLevel}%" else "  ",
-                                      color = fgColor,
-                                      fontSize = 10.sp,
-                                      fontWeight = FontWeight.Bold
-                                  )
+                              if (state.hotspot) {
+                                  IosHotspotIcon()
+                              } else if (state.wifiOn) {
+                                  IosWifiIcon(color = fgColor)
                               }
+                              IosBatteryIcon(
+                                  color = fgColor,
+                                  level = state.batteryLevel,
+                                  lowPower = state.lowPowerMode,
+                                  showPercent = state.showBatteryPercent
+                              )
                           }
                       }
                   } else if (state.showIsland) {
                       Box(modifier = Modifier.padding(top = 6.dp)) {
-                          IslandPill(state = state, micOutside = micOutside)
+                          IslandPill(
+                              state = state,
+                              micOutside = micOutside,
+                              pulseAlpha = if (state.isRecording && !state.isPaused) pulseAlpha else 1f,
+                              standalone = true
+                          )
                       }
                   } else if (state.isRecording) {
                       Row(
                           modifier = Modifier
                               .padding(top = 6.dp)
                               .clip(CircleShape)
-                              .background(Color(0xE612141C))
+                              .background(Color(0xF012141C))
+                              .border(1.dp, Color.White.copy(alpha = 0.14f), CircleShape)
                               .clickable { OverlayStateHolder.toggleExpanded() }
-                              .padding(horizontal = 14.dp, vertical = 6.dp),
+                              .padding(horizontal = 14.dp, vertical = 7.dp),
                           verticalAlignment = Alignment.CenterVertically,
                           horizontalArrangement = Arrangement.spacedBy(8.dp)
                       ) {
-                          Box(Modifier.size(8.dp).clip(CircleShape).background(Color(0xFFFF3B30)))
-                          Text(text = timerText, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                          Box(
+                              Modifier
+                                  .size(9.dp)
+                                  .clip(CircleShape)
+                                  .background(Color(0xFFFF3B30).copy(alpha = pulseAlpha))
+                          )
+                          Text(text = timerText, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                       }
                   }
 
-                  AnimatedVisibility(visible = state.expanded) {
-                      Row(
+                  // Bouncy iOS Spring Expanded Live Activity Card
+                  AnimatedVisibility(
+                      visible = state.expanded,
+                      enter = scaleIn(
+                          initialScale = 0.55f,
+                          transformOrigin = TransformOrigin(0.5f, 0f),
+                          animationSpec = spring(dampingRatio = 0.62f, stiffness = 420f)
+                      ) + expandVertically(expandFrom = Alignment.Top) + fadeIn(tween(150)),
+                      exit = scaleOut(
+                          targetScale = 0.55f,
+                          transformOrigin = TransformOrigin(0.5f, 0f),
+                          animationSpec = spring(dampingRatio = 0.85f, stiffness = 480f)
+                      ) + shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut(tween(120))
+                  ) {
+                      ExpandedLiveActivityCard(
+                          state = state,
+                          timerText = timerText,
+                          pulseAlpha = pulseAlpha
+                      )
+                  }
+              }
+          }
+
+          @Composable
+          private fun IslandPill(
+              state: OverlayUiState,
+              micOutside: Boolean,
+              pulseAlpha: Float,
+              standalone: Boolean
+          ) {
+              // Continuous horizontal position so the orange dot visibly slides from inside Island to outside right!
+              val dotOffsetX by animateDpAsState(
+                  targetValue = if (micOutside) 40.dp else 0.dp,
+                  animationSpec = spring(dampingRatio = 0.64f, stiffness = 340f),
+                  label = "dotSlide"
+              )
+              val pillScale by animateFloatAsState(
+                  targetValue = if (state.expanded) 0.94f else 1f,
+                  animationSpec = spring(dampingRatio = 0.6f, stiffness = 420f),
+                  label = "pillTap"
+              )
+
+              Box(contentAlignment = Alignment.Center) {
+                  Row(
+                      modifier = Modifier
+                          .width((154 * pillScale).dp)
+                          .height(34.dp)
+                          .shadow(if (standalone) 12.dp else 0.dp, CircleShape)
+                          .clip(CircleShape)
+                          .background(Color.Black)
+                          .then(
+                              if (standalone) Modifier.border(1.dp, Color.White.copy(alpha = 0.14f), CircleShape)
+                              else Modifier
+                          )
+                          .clickable(
+                              interactionSource = remember { MutableInteractionSource() },
+                              indication = null
+                          ) { OverlayStateHolder.toggleExpanded() }
+                          .padding(horizontal = 13.dp),
+                      verticalAlignment = Alignment.CenterVertically,
+                      horizontalArrangement = Arrangement.SpaceBetween
+                  ) {
+                      // Left Red Record Circle
+                      Box(
                           modifier = Modifier
-                              .padding(top = 6.dp)
-                              .clip(RoundedCornerShape(24.dp))
-                              .background(Color.Black)
-                              .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(24.dp))
-                              .padding(horizontal = 14.dp, vertical = 10.dp),
+                              .size(13.dp)
+                              .clip(CircleShape)
+                              .background(
+                                  if (state.isPaused) Color(0xFFFF9F0A)
+                                  else Color(0xFFFF3B30).copy(alpha = pulseAlpha)
+                              )
+                      )
+
+                      if (standalone && state.isRecording) {
+                          val m = state.elapsedSeconds / 60
+                          val s = state.elapsedSeconds % 60
+                          Text(
+                              text = String.format(Locale.US, "%02d:%02d", m, s),
+                              color = Color.White,
+                              fontSize = 11.sp,
+                              fontWeight = FontWeight.SemiBold
+                          )
+                      }
+
+                      // Placeholder spacing on right-center inside Island
+                      Box(modifier = Modifier.padding(end = if (standalone) 6.dp else 22.dp)) {
+                          if (state.micEnabled && !micOutside) {
+                              Box(
+                                  modifier = Modifier
+                                      .size(6.5.dp)
+                                      .clip(CircleShape)
+                                      .background(Color(0xFFFF9F0A))
+                              )
+                          }
+                      }
+                  }
+
+                  // Sliding outside orange dot (slides cleanly outside right edge when in browser)
+                  if (state.micEnabled && dotOffsetX > 4.dp) {
+                      Box(
+                          modifier = Modifier
+                              .align(Alignment.CenterEnd)
+                              .offset(x = dotOffsetX - 24.dp)
+                              .size(10.dp)
+                              .clip(CircleShape)
+                              .background(Color(0xFFFF9F0A))
+                              .border(2.dp, Color.Black, CircleShape)
+                      )
+                  }
+              }
+          }
+
+          @Composable
+          private fun ExpandedLiveActivityCard(
+              state: OverlayUiState,
+              timerText: String,
+              pulseAlpha: Float
+          ) {
+              val inf = rememberInfiniteTransition(label = "wave")
+              val w1 by inf.animateFloat(0.3f, 1f, infiniteRepeatable(tween(420), RepeatMode.Reverse), label = "w1")
+              val w2 by inf.animateFloat(0.9f, 0.25f, infiniteRepeatable(tween(360), RepeatMode.Reverse), label = "w2")
+              val w3 by inf.animateFloat(0.4f, 0.95f, infiniteRepeatable(tween(490), RepeatMode.Reverse), label = "w3")
+              val w4 by inf.animateFloat(0.8f, 0.3f, infiniteRepeatable(tween(390), RepeatMode.Reverse), label = "w4")
+              val waveBars = listOf(w1, w2, w3, w4, w2, w1)
+
+              Column(
+                  modifier = Modifier
+                      .padding(top = 6.dp)
+                      .widthIn(max = 360.dp)
+                      .fillMaxWidth()
+                      .shadow(22.dp, RoundedCornerShape(30.dp))
+                      .clip(RoundedCornerShape(30.dp))
+                      .background(Color.Black)
+                      .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(30.dp))
+                      .padding(16.dp),
+                  verticalArrangement = Arrangement.spacedBy(12.dp)
+              ) {
+                  Row(
+                      modifier = Modifier.fillMaxWidth(),
+                      horizontalArrangement = Arrangement.SpaceBetween,
+                      verticalAlignment = Alignment.CenterVertically
+                  ) {
+                      Row(
                           verticalAlignment = Alignment.CenterVertically,
                           horizontalArrangement = Arrangement.spacedBy(10.dp)
                       ) {
-                          Text(
-                              text = if (state.isRecording) "REC $timerText" else "iRec Ready",
-                              color = Color.White,
-                              fontSize = 12.sp,
-                              fontWeight = FontWeight.SemiBold
-                          )
                           Box(
                               modifier = Modifier
-                                  .clip(RoundedCornerShape(14.dp))
-                                  .background(if (state.micEnabled) Color(0xFFFF9F0A) else Color(0xFF2C2F3A))
-                                  .clickable { OverlayStateHolder.toggleMic() }
-                                  .padding(horizontal = 10.dp, vertical = 6.dp)
+                                  .size(34.dp)
+                                  .clip(CircleShape)
+                                  .background(Color(0xFFFF3B30).copy(alpha = 0.18f))
+                                  .border(1.dp, Color(0xFFFF3B30).copy(alpha = 0.6f), CircleShape),
+                              contentAlignment = Alignment.Center
                           ) {
+                              Box(
+                                  modifier = Modifier
+                                      .size(13.dp)
+                                      .clip(CircleShape)
+                                      .background(
+                                          if (state.isPaused) Color(0xFFFF9F0A)
+                                          else Color(0xFFFF3B30).copy(alpha = if (state.isRecording) pulseAlpha else 1f)
+                                      )
+                              )
+                          }
+                          Column {
                               Text(
-                                  text = if (state.micEnabled) "Mic On" else "Mic Off",
-                                  color = if (state.micEnabled) Color.Black else Color.White,
-                                  fontSize = 11.sp,
+                                  text = if (state.isRecording) (if (state.isPaused) "পজ করা আছে" else "রেকর্ড হচ্ছে") else "স্ক্রিন রেকর্ডার",
+                                  color = Color.White,
+                                  fontSize = 12.sp,
+                                  fontWeight = FontWeight.SemiBold
+                              )
+                              Text(
+                                  text = if (state.isRecording) timerText else "প্রস্তুত",
+                                  color = if (state.isRecording) Color.White else Color(0xFF94A3B8),
+                                  fontSize = 15.sp,
                                   fontWeight = FontWeight.Bold
                               )
                           }
-                          if (state.isRecording) {
+                      }
+
+                      // Animated Waveform Bars
+                      Row(
+                          modifier = Modifier.height(24.dp),
+                          verticalAlignment = Alignment.CenterVertically,
+                          horizontalArrangement = Arrangement.spacedBy(3.dp)
+                      ) {
+                          waveBars.forEach { frac ->
+                              val barFrac = if (state.isRecording && !state.isPaused) frac else 0.22f
                               Box(
                                   modifier = Modifier
-                                      .clip(RoundedCornerShape(14.dp))
-                                      .background(Color(0xFFFF3B30))
-                                      .clickable {
-                                          OverlayStateHolder.toggleExpanded()
-                                          OverlayStateHolder.onStopRecordingRequested?.invoke()
-                                      }
-                                      .padding(horizontal = 10.dp, vertical = 6.dp)
-                              ) {
-                                  Text(text = "Stop", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                              }
+                                      .width(3.dp)
+                                      .height((22 * barFrac).dp)
+                                      .clip(CircleShape)
+                                      .background(if (state.micEnabled) Color(0xFFFF9F0A) else Color(0xFFFF3B30))
+                              )
+                          }
+                      }
+                  }
+
+                  Row(
+                      modifier = Modifier.fillMaxWidth(),
+                      horizontalArrangement = Arrangement.spacedBy(8.dp)
+                  ) {
+                      Box(
+                          modifier = Modifier
+                              .weight(1f)
+                              .height(38.dp)
+                              .clip(RoundedCornerShape(14.dp))
+                              .background(if (state.micEnabled) Color(0xFFFF9F0A) else Color.White.copy(alpha = 0.12f))
+                              .clickable { OverlayStateHolder.toggleMic() },
+                          contentAlignment = Alignment.Center
+                      ) {
+                          Text(
+                              text = if (state.micEnabled) "মাইক চালু" else "মাইক বন্ধ",
+                              color = if (state.micEnabled) Color.Black else Color.White,
+                              fontSize = 12.sp,
+                              fontWeight = FontWeight.SemiBold
+                          )
+                      }
+
+                      if (state.isRecording) {
+                          Box(
+                              modifier = Modifier
+                                  .weight(1f)
+                                  .height(38.dp)
+                                  .clip(RoundedCornerShape(14.dp))
+                                  .background(Color.White.copy(alpha = 0.14f))
+                                  .clickable { OverlayStateHolder.onPauseResumeRequested?.invoke() },
+                              contentAlignment = Alignment.Center
+                          ) {
+                              Text(
+                                  text = if (state.isPaused) "চালু" else "পজ",
+                                  color = Color.White,
+                                  fontSize = 12.sp,
+                                  fontWeight = FontWeight.SemiBold
+                              )
+                          }
+                          Box(
+                              modifier = Modifier
+                                  .weight(1f)
+                                  .height(38.dp)
+                                  .clip(RoundedCornerShape(14.dp))
+                                  .background(Color(0xFFFF3B30))
+                                  .clickable {
+                                      OverlayStateHolder.setExpanded(false)
+                                      OverlayStateHolder.onStopRecordingRequested?.invoke()
+                                  },
+                              contentAlignment = Alignment.Center
+                          ) {
+                              Text(text = "বন্ধ", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                          }
+                      } else {
+                          Box(
+                              modifier = Modifier
+                                  .weight(1f)
+                                  .height(38.dp)
+                                  .clip(RoundedCornerShape(14.dp))
+                                  .background(Color.White.copy(alpha = 0.12f))
+                                  .clickable { OverlayStateHolder.setExpanded(false) },
+                              contentAlignment = Alignment.Center
+                          ) {
+                              Text(text = "বন্ধ করুন", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                           }
                       }
                   }
@@ -422,51 +764,123 @@ jobs:
           }
 
           @Composable
-          private fun IslandPill(state: OverlayUiState, micOutside: Boolean) {
-              val dotOffset by animateDpAsState(
-                  targetValue = if (micOutside) 14.dp else 0.dp,
-                  animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = 0.75f),
-                  label = "micDot"
-              )
-              Row(verticalAlignment = Alignment.CenterVertically) {
-                  Row(
-                      modifier = Modifier
-                          .width(126.dp)
-                          .height(32.dp)
-                          .clip(CircleShape)
-                          .background(Color.Black)
-                          .border(1.dp, Color.White.copy(alpha = 0.14f), CircleShape)
-                          .clickable { OverlayStateHolder.toggleExpanded() }
-                          .padding(horizontal = 12.dp),
-                      verticalAlignment = Alignment.CenterVertically,
-                      horizontalArrangement = Arrangement.SpaceBetween
-                  ) {
-                      Box(
-                          modifier = Modifier
-                              .size(11.dp)
-                              .clip(CircleShape)
-                              .background(Color(0xFFFF3B30))
-                      )
-                      if (state.micEnabled && !micOutside) {
-                          Box(
-                              modifier = Modifier
-                                  .size(6.dp)
-                                  .clip(CircleShape)
-                                  .background(Color(0xFFFF9F0A))
-                          )
-                      }
-                  }
-                  if (state.micEnabled && micOutside) {
-                      Spacer(modifier = Modifier.width(6.dp))
-                      Box(
-                          modifier = Modifier
-                              .offset(x = dotOffset - 14.dp)
-                              .size(9.dp)
-                              .clip(CircleShape)
-                              .background(Color(0xFFFF9F0A))
-                              .border(1.5.dp, Color.Black, CircleShape)
+          private fun IosSignalIcon(color: Color, active: Boolean) {
+              Canvas(modifier = Modifier.size(width = 16.dp, height = 11.dp)) {
+                  val barW = size.width * 0.16f
+                  val gap = size.width * 0.08f
+                  val heights = listOf(0.32f, 0.50f, 0.72f, 0.96f)
+                  val alpha = if (active) 1f else 0.4f
+                  heights.forEachIndexed { i, h ->
+                      val bh = size.height * h
+                      drawRoundRect(
+                          color = color.copy(alpha = alpha),
+                          topLeft = Offset(i * (barW + gap), size.height - bh),
+                          size = Size(barW, bh),
+                          cornerRadius = CornerRadius(1.5f, 1.5f)
                       )
                   }
+              }
+          }
+
+          @Composable
+          private fun IosWifiIcon(color: Color) {
+              Canvas(modifier = Modifier.size(width = 15.dp, height = 11.dp)) {
+                  val cx = size.width / 2f
+                  val cy = size.height * 0.88f
+                  drawArc(
+                      color = color,
+                      startAngle = -135f,
+                      sweepAngle = 90f,
+                      useCenter = false,
+                      topLeft = Offset(cx - size.width * 0.45f, cy - size.width * 0.45f),
+                      size = Size(size.width * 0.9f, size.width * 0.9f),
+                      style = Stroke(width = 2.6f, cap = StrokeCap.Round)
+                  )
+                  drawArc(
+                      color = color,
+                      startAngle = -135f,
+                      sweepAngle = 90f,
+                      useCenter = false,
+                      topLeft = Offset(cx - size.width * 0.28f, cy - size.width * 0.28f),
+                      size = Size(size.width * 0.56f, size.width * 0.56f),
+                      style = Stroke(width = 2.6f, cap = StrokeCap.Round)
+                  )
+                  drawCircle(color = color, radius = 2.2f, center = Offset(cx, cy - 1f))
+              }
+          }
+
+          @Composable
+          private fun IosHotspotIcon() {
+              Canvas(modifier = Modifier.size(width = 15.dp, height = 11.dp)) {
+                  val r = size.height * 0.34f
+                  drawCircle(Color(0xFF30D158), r, Offset(size.width * 0.35f, size.height / 2f), style = Stroke(2.4f))
+                  drawCircle(Color(0xFF30D158), r, Offset(size.width * 0.65f, size.height / 2f), style = Stroke(2.4f))
+              }
+          }
+
+          @Composable
+          private fun IosBatteryIcon(color: Color, level: Int, lowPower: Boolean, showPercent: Boolean) {
+              Box(contentAlignment = Alignment.CenterStart) {
+                  Canvas(modifier = Modifier.size(width = 25.dp, height = 12.dp)) {
+                      val bodyW = size.width - 4f
+                      val bodyH = size.height
+                      drawRoundRect(
+                          color = color.copy(alpha = if (showPercent) 0.25f else 0.48f),
+                          topLeft = Offset.Zero,
+                          size = Size(bodyW, bodyH),
+                          cornerRadius = CornerRadius(6f, 6f),
+                          style = if (showPercent) androidx.compose.ui.graphics.drawscope.Fill else Stroke(2.2f)
+                      )
+                      val fillRatio = (level / 100f).coerceIn(0.12f, 1f)
+                      val fillColor = if (lowPower) Color(0xFFFFD60A) else color
+                      val pad = if (showPercent) 0f else 4f
+                      drawRoundRect(
+                          color = fillColor,
+                          topLeft = Offset(pad, pad),
+                          size = Size((bodyW - pad * 2) * fillRatio, bodyH - pad * 2),
+                          cornerRadius = CornerRadius(4f, 4f)
+                      )
+                      drawRoundRect(
+                          color = color.copy(alpha = 0.5f),
+                          topLeft = Offset(bodyW + 2f, bodyH * 0.3f),
+                          size = Size(3f, bodyH * 0.4f),
+                          cornerRadius = CornerRadius(2f, 2f)
+                      )
+                  }
+                  if (showPercent) {
+                      Text(
+                          text = "$level",
+                          color = Color.Black,
+                          fontSize = 8.sp,
+                          fontWeight = FontWeight.ExtraBold,
+                          modifier = Modifier.padding(start = 5.dp)
+                      )
+                  }
+              }
+          }
+
+          @Composable
+          private fun IosMoonIcon(color: Color) {
+              Canvas(modifier = Modifier.size(10.dp)) {
+                  val p = Path().apply {
+                      addOval(androidx.compose.ui.geometry.Rect(0f, 0f, size.width, size.height))
+                  }
+                  drawPath(p, color.copy(alpha = 0.9f))
+                  drawCircle(Color(0xFF2B3348), size.width * 0.38f, Offset(size.width * 0.72f, size.height * 0.28f))
+              }
+          }
+
+          @Composable
+          private fun IosLocationIcon(color: Color) {
+              Canvas(modifier = Modifier.size(10.dp)) {
+                  val p = Path().apply {
+                      moveTo(size.width * 0.9f, size.height * 0.1f)
+                      lineTo(size.width * 0.1f, size.height * 0.48f)
+                      lineTo(size.width * 0.48f, size.height * 0.56f)
+                      lineTo(size.width * 0.56f, size.height * 0.92f)
+                      close()
+                  }
+                  drawPath(p, color)
               }
           }
           EOF
@@ -538,7 +952,7 @@ jobs:
                       setViewTreeSavedStateRegistryOwner(this@OverlayStatusBarService)
                       setContent {
                           val uiState by OverlayStateHolder.state.collectAsState()
-                          DynamicStatusOverlay(state = uiState)
+                          DynamicStatusOverlay(state = uiState, isPreview = false)
                       }
                   }
                   overlayView = view
@@ -588,18 +1002,34 @@ jobs:
               private val browserPackages = setOf(
                   "com.android.chrome",
                   "com.chrome.beta",
+                  "com.chrome.dev",
                   "com.sec.android.app.sbrowser",
                   "org.mozilla.firefox",
                   "com.brave.browser",
                   "com.opera.browser",
-                  "com.microsoft.emmx"
+                  "com.opera.mini.native",
+                  "com.microsoft.emmx",
+                  "com.UCMobile.intl"
               )
+
+              private fun isIgnoredSystemOrKeyboard(pkg: String): Boolean {
+                  return pkg == "com.android.systemui" ||
+                      pkg == "com.irecstudio" ||
+                      pkg.contains("inputmethod") ||
+                      pkg.contains("keyboard") ||
+                      pkg.contains("honeyboard") ||
+                      pkg.contains("gboard") ||
+                      pkg.contains("swiftkey") ||
+                      pkg == "com.android.permissioncontroller" ||
+                      pkg == "com.google.android.permissioncontroller"
+              }
 
               override fun onAccessibilityEvent(event: AccessibilityEvent?) {
                   if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
                       val pkg = event.packageName?.toString() ?: return
-                      if (pkg == "com.android.systemui") return
-                      OverlayStateHolder.setBrowserActive(pkg in browserPackages)
+                      if (isIgnoredSystemOrKeyboard(pkg)) return
+                      val isBrowser = pkg in browserPackages || pkg.contains("browser") || pkg.contains("chrome")
+                      OverlayStateHolder.setBrowserActive(isBrowser)
                   }
               }
 
@@ -649,8 +1079,10 @@ jobs:
 
               private val tickRunnable = object : Runnable {
                   override fun run() {
-                      seconds++
-                      OverlayStateHolder.updateElapsed(seconds)
+                      if (!OverlayStateHolder.state.value.isPaused) {
+                          seconds++
+                          OverlayStateHolder.updateElapsed(seconds)
+                      }
                       handler.postDelayed(this, 1000)
                   }
               }
@@ -745,6 +1177,16 @@ jobs:
                   seconds = 0
                   OverlayStateHolder.setRecording(true, 0)
                   OverlayStateHolder.onStopRecordingRequested = { stopAndSaveToGallery() }
+                  OverlayStateHolder.onPauseResumeRequested = {
+                      val paused = OverlayStateHolder.state.value.isPaused
+                      if (paused) {
+                          runCatching { recorder?.resume() }
+                          OverlayStateHolder.setPaused(false)
+                      } else {
+                          runCatching { recorder?.pause() }
+                          OverlayStateHolder.setPaused(true)
+                      }
+                  }
                   handler.postDelayed(tickRunnable, 1000)
                   return START_STICKY
               }
@@ -752,6 +1194,7 @@ jobs:
               private fun stopAndSaveToGallery() {
                   handler.removeCallbacks(tickRunnable)
                   OverlayStateHolder.onStopRecordingRequested = null
+                  OverlayStateHolder.onPauseResumeRequested = null
                   OverlayStateHolder.setRecording(false, 0)
 
                   runCatching { recorder?.stop() }
@@ -815,23 +1258,28 @@ jobs:
           package com.irecstudio
 
           import android.Manifest
+          import android.accessibilityservice.AccessibilityServiceInfo
           import android.content.Intent
           import android.media.projection.MediaProjectionManager
           import android.net.Uri
           import android.os.Build
           import android.os.Bundle
           import android.provider.Settings
+          import android.view.accessibility.AccessibilityManager
           import androidx.activity.ComponentActivity
           import androidx.activity.compose.setContent
           import androidx.activity.result.contract.ActivityResultContracts
           import androidx.compose.foundation.background
+          import androidx.compose.foundation.border
           import androidx.compose.foundation.layout.*
+          import androidx.compose.foundation.rememberScrollState
           import androidx.compose.foundation.shape.RoundedCornerShape
+          import androidx.compose.foundation.verticalScroll
           import androidx.compose.material3.*
-          import androidx.compose.runtime.collectAsState
-          import androidx.compose.runtime.getValue
+          import androidx.compose.runtime.*
           import androidx.compose.ui.Alignment
           import androidx.compose.ui.Modifier
+          import androidx.compose.ui.draw.clip
           import androidx.compose.ui.graphics.Color
           import androidx.compose.ui.text.font.FontWeight
           import androidx.compose.ui.unit.dp
@@ -839,6 +1287,7 @@ jobs:
           import com.irecstudio.service.OverlayStatusBarService
           import com.irecstudio.service.ScreenRecordService
           import com.irecstudio.state.OverlayStateHolder
+          import com.irecstudio.ui.DynamicStatusOverlay
 
           class MainActivity : ComponentActivity() {
 
@@ -858,6 +1307,12 @@ jobs:
                   }
               }
 
+              private fun isBrowserAccessibilityOn(): Boolean {
+                  val am = getSystemService(ACCESSIBILITY_SERVICE) as AccessibilityManager
+                  val list = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+                  return list.any { it.resolveInfo.serviceInfo.packageName == packageName }
+              }
+
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
 
@@ -869,106 +1324,165 @@ jobs:
 
                   setContent {
                       val uiState by OverlayStateHolder.state.collectAsState()
+                      var accEnabled by remember { mutableStateOf(isBrowserAccessibilityOn()) }
+
+                      LaunchedEffect(uiState.overlayRunning, uiState.isRecording) {
+                          accEnabled = isBrowserAccessibilityOn()
+                      }
+
                       Column(
                           modifier = Modifier
                               .fillMaxSize()
                               .background(Color(0xFF090A0F))
                               .systemBarsPadding()
-                              .padding(20.dp),
+                              .verticalScroll(rememberScrollState())
+                              .padding(16.dp),
                           verticalArrangement = Arrangement.spacedBy(14.dp)
                       ) {
-                          Text("iRec Studio", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                          Text("iRec Studio", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
 
-                          Row(
-                              modifier = Modifier.fillMaxWidth(),
-                              horizontalArrangement = Arrangement.SpaceBetween,
-                              verticalAlignment = Alignment.CenterVertically
+                          // লাইভ প্রিভিউ (ঠিক ছবির মতো Dynamic Island + পূর্ণ স্ট্যাটাস বার)
+                          DynamicStatusOverlay(state = uiState, isPreview = true)
+
+                          // স্ট্যাটাস বার ওভারলে ও রেকর্ডিং বাটন
+                          Column(
+                              modifier = Modifier
+                                  .fillMaxWidth()
+                                  .clip(RoundedCornerShape(22.dp))
+                                  .background(Color(0xFF12141C))
+                                  .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(22.dp))
+                                  .padding(14.dp),
+                              verticalArrangement = Arrangement.spacedBy(10.dp)
                           ) {
-                              Text("Dynamic Island", color = Color.White)
-                              Switch(checked = uiState.showIsland, onCheckedChange = { OverlayStateHolder.toggleIsland() })
-                          }
-
-                          Row(
-                              modifier = Modifier.fillMaxWidth(),
-                              horizontalArrangement = Arrangement.SpaceBetween,
-                              verticalAlignment = Alignment.CenterVertically
-                          ) {
-                              Text("পূর্ণ স্ট্যাটাস বার", color = Color.White)
-                              Switch(checked = uiState.showStatusBar, onCheckedChange = { OverlayStateHolder.toggleStatusBar() })
-                          }
-
-                          Row(
-                              modifier = Modifier.fillMaxWidth(),
-                              horizontalArrangement = Arrangement.SpaceBetween,
-                              verticalAlignment = Alignment.CenterVertically
-                          ) {
-                              Text("মাইক্রোফোন", color = Color.White)
-                              Switch(checked = uiState.micEnabled, onCheckedChange = { OverlayStateHolder.toggleMic() })
-                          }
-
-                          Row(
-                              modifier = Modifier.fillMaxWidth(),
-                              horizontalArrangement = Arrangement.SpaceBetween,
-                              verticalAlignment = Alignment.CenterVertically
-                          ) {
-                              Text("ব্যাটারি %", color = Color.White)
-                              Switch(checked = uiState.showBatteryPercent, onCheckedChange = { OverlayStateHolder.toggleBatteryPercent() })
-                          }
-
-                          Button(
-                              onClick = {
-                                  if (!Settings.canDrawOverlays(this@MainActivity)) {
-                                      startActivity(
-                                          Intent(
-                                              Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                              Uri.parse("package:$packageName")
+                              Button(
+                                  onClick = {
+                                      if (!Settings.canDrawOverlays(this@MainActivity)) {
+                                          startActivity(
+                                              Intent(
+                                                  Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                                  Uri.parse("package:$packageName")
+                                              )
                                           )
-                                      )
-                                  } else if (uiState.overlayRunning) {
-                                      stopService(Intent(this@MainActivity, OverlayStatusBarService::class.java))
-                                  } else {
-                                      startForegroundService(Intent(this@MainActivity, OverlayStatusBarService::class.java))
-                                  }
-                              },
-                              modifier = Modifier.fillMaxWidth(),
-                              shape = RoundedCornerShape(14.dp)
-                          ) {
-                              Text(if (uiState.overlayRunning) "স্ট্যাটাস বার ওভারলে বন্ধ করুন" else "স্ট্যাটাস বার ওভারলে চালু করুন")
+                                      } else if (uiState.overlayRunning) {
+                                          stopService(Intent(this@MainActivity, OverlayStatusBarService::class.java))
+                                      } else {
+                                          startForegroundService(Intent(this@MainActivity, OverlayStatusBarService::class.java))
+                                      }
+                                  },
+                                  colors = ButtonDefaults.buttonColors(
+                                      containerColor = if (uiState.overlayRunning) Color(0xFF2C2F3A) else Color(0xFF0A84FF)
+                                  ),
+                                  modifier = Modifier.fillMaxWidth(),
+                                  shape = RoundedCornerShape(14.dp)
+                              ) {
+                                  Text(
+                                      if (uiState.overlayRunning) "ভাসমান স্ট্যাটাস বার বন্ধ করুন" else "ভাসমান স্ট্যাটাস বার চালু করুন",
+                                      color = Color.White
+                                  )
+                              }
+
+                              Button(
+                                  onClick = {
+                                      if (uiState.isRecording) {
+                                          startService(Intent(this@MainActivity, ScreenRecordService::class.java).apply {
+                                              action = "STOP_RECORDING"
+                                          })
+                                      } else {
+                                          val mpm = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                                          projLauncher.launch(mpm.createScreenCaptureIntent())
+                                      }
+                                  },
+                                  colors = ButtonDefaults.buttonColors(
+                                      containerColor = if (uiState.isRecording) Color(0xFFFF3B30) else Color(0xFF30D158)
+                                  ),
+                                  modifier = Modifier.fillMaxWidth(),
+                                  shape = RoundedCornerShape(14.dp)
+                              ) {
+                                  Text(
+                                      if (uiState.isRecording) "রেকর্ডিং বন্ধ করুন" else "স্ক্রিন রেকর্ডিং শুরু করুন",
+                                      color = if (uiState.isRecording) Color.White else Color.Black,
+                                      fontWeight = FontWeight.Bold
+                                  )
+                              }
                           }
 
-                          OutlinedButton(
-                              onClick = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
-                              modifier = Modifier.fillMaxWidth(),
-                              shape = RoundedCornerShape(14.dp)
+                          // আলাদা আলাদা সুইচ (Island ও স্ট্যাটাস বার)
+                          Column(
+                              modifier = Modifier
+                                  .fillMaxWidth()
+                                  .clip(RoundedCornerShape(22.dp))
+                                  .background(Color(0xFF12141C))
+                                  .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(22.dp))
+                                  .padding(14.dp),
+                              verticalArrangement = Arrangement.spacedBy(6.dp)
                           ) {
-                              Text("ব্রাউজার ডিটেকশন (Accessibility) অন করুন", color = Color.White)
+                              Text("আইল্যান্ড ও স্ট্যাটাস বার (আলাদা কন্ট্রোল)", color = Color(0xFFCBD5E1), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                              ToggleRow("Dynamic Island", uiState.showIsland) { OverlayStateHolder.toggleIsland() }
+                              ToggleRow("পূর্ণ স্ট্যাটাস বার", uiState.showStatusBar) { OverlayStateHolder.toggleStatusBar() }
+                              ToggleRow("একদম ওপরের প্রান্তে (Top Edge)", uiState.topEdgeFullWidth) { OverlayStateHolder.toggleTopEdge() }
+                              ToggleRow("মাইক্রোফোন", uiState.micEnabled) { OverlayStateHolder.toggleMic() }
+                              ToggleRow("ব্রাউজার মোড প্রিভিউ (হলুদ ডট ডানে)", uiState.forceBrowserPreview) { OverlayStateHolder.toggleBrowserPreview() }
                           }
 
-                          Button(
-                              onClick = {
-                                  if (uiState.isRecording) {
-                                      startService(Intent(this@MainActivity, ScreenRecordService::class.java).apply {
-                                          action = "STOP_RECORDING"
-                                      })
-                                  } else {
-                                      val mpm = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-                                      projLauncher.launch(mpm.createScreenCaptureIntent())
-                                  }
-                              },
-                              colors = ButtonDefaults.buttonColors(
-                                  containerColor = if (uiState.isRecording) Color(0xFFFF3B30) else Color(0xFF30D158)
-                              ),
-                              modifier = Modifier.fillMaxWidth(),
-                              shape = RoundedCornerShape(14.dp)
+                          // ব্রাউজার ডিটেকশন সেটিংস
+                          Column(
+                              modifier = Modifier
+                                  .fillMaxWidth()
+                                  .clip(RoundedCornerShape(22.dp))
+                                  .background(Color(0xFF12141C))
+                                  .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(22.dp))
+                                  .padding(14.dp),
+                              verticalArrangement = Arrangement.spacedBy(8.dp)
                           ) {
                               Text(
-                                  if (uiState.isRecording) "রেকর্ডিং বন্ধ করুন" else "স্ক্রিন রেকর্ডিং শুরু করুন",
-                                  color = Color.Black,
-                                  fontWeight = FontWeight.Bold
+                                  text = if (accEnabled) "Chrome/ব্রাউজার ডিটেকশন: চালু আছে ✓" else "Chrome/ব্রাউজার ডিটেকশন: বন্ধ আছে",
+                                  color = if (accEnabled) Color(0xFF30D158) else Color(0xFFFF9F0A),
+                                  fontSize = 13.sp,
+                                  fontWeight = FontWeight.SemiBold
                               )
+                              OutlinedButton(
+                                  onClick = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
+                                  modifier = Modifier.fillMaxWidth(),
+                                  shape = RoundedCornerShape(14.dp)
+                              ) {
+                                  Text("Accessibility থেকে iRec Studio অন করুন", color = Color.White, fontSize = 12.sp)
+                              }
+                          }
+
+                          // আইফোন স্ট্যাটাস টগল
+                          Column(
+                              modifier = Modifier
+                                  .fillMaxWidth()
+                                  .clip(RoundedCornerShape(22.dp))
+                                  .background(Color(0xFF12141C))
+                                  .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(22.dp))
+                                  .padding(14.dp),
+                              verticalArrangement = Arrangement.spacedBy(6.dp)
+                          ) {
+                              Text("আইফোন স্ট্যাটাস টগল", color = Color(0xFFCBD5E1), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                              ToggleRow("ওয়াই-ফাই (Wi-Fi)", uiState.wifiOn) { OverlayStateHolder.toggleWifi() }
+                              ToggleRow("সিম নেট (Cellular)", uiState.cellularData) { OverlayStateHolder.toggleCellular() }
+                              ToggleRow("হটস্পট (Hotspot)", uiState.hotspot) { OverlayStateHolder.toggleHotspot() }
+                              ToggleRow("ফ্লাইট মোড (Airplane)", uiState.airplaneMode) { OverlayStateHolder.toggleAirplane() }
+                              ToggleRow("DND (চাঁদ)", uiState.doNotDisturb) { OverlayStateHolder.toggleDnd() }
+                              ToggleRow("লোকেশন", uiState.location) { OverlayStateHolder.toggleLocation() }
+                              ToggleRow("লো পাওয়ার (হলুদ ব্যাটারি)", uiState.lowPowerMode) { OverlayStateHolder.toggleLowPower() }
+                              ToggleRow("ব্যাটারি %", uiState.showBatteryPercent) { OverlayStateHolder.toggleBatteryPercent() }
                           }
                       }
                   }
+              }
+          }
+
+          @Composable
+          private fun ToggleRow(label: String, checked: Boolean, onToggle: () -> Unit) {
+              Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  horizontalArrangement = Arrangement.SpaceBetween,
+                  verticalAlignment = Alignment.CenterVertically
+              ) {
+                  Text(label, color = Color.White, fontSize = 14.sp)
+                  Switch(checked = checked, onCheckedChange = { onToggle() })
               }
           }
           EOF
