@@ -17,8 +17,965 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
+
+      - name: Generate Android Project Structure
+        run: |
+          mkdir -p app/src/main/res/values app/src/main/res/xml app/src/main/java/com/irecstudio/state app/src/main/java/com/irecstudio/ui app/src/main/java/com/irecstudio/service
+
+          cat << 'EOF' > settings.gradle.kts
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "iRecStudio"
+          include(":app")
+          EOF
+
+          cat << 'EOF' > gradle.properties
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          kotlin.code.style=official
+          android.nonTransitiveRClass=true
+          EOF
+
+          cat << 'EOF' > build.gradle.kts
+          plugins {
+              id("com.android.application") version "8.5.2" apply false
+              id("org.jetbrains.kotlin.android") version "2.0.0" apply false
+              id("org.jetbrains.kotlin.plugin.compose") version "2.0.0" apply false
+          }
+          EOF
+
+          cat << 'EOF' > app/build.gradle.kts
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+              id("org.jetbrains.kotlin.plugin.compose")
+          }
+
+          android {
+              namespace = "com.irecstudio"
+              compileSdk = 34
+
+              defaultConfig {
+                  applicationId = "com.irecstudio"
+                  minSdk = 29
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+
+              buildTypes {
+                  release {
+                      isMinifyEnabled = false
+                  }
+              }
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
+              buildFeatures {
+                  compose = true
+              }
+          }
+
+          dependencies {
+              val composeBom = platform("androidx.compose:compose-bom:2024.06.00")
+              implementation(composeBom)
+              implementation("androidx.core:core-ktx:1.13.1")
+              implementation("androidx.activity:activity-compose:1.9.0")
+              implementation("androidx.compose.ui:ui")
+              implementation("androidx.compose.foundation:foundation")
+              implementation("androidx.compose.animation:animation")
+              implementation("androidx.compose.material3:material3")
+              implementation("androidx.lifecycle:lifecycle-service:2.8.2")
+              implementation("androidx.savedstate:savedstate-ktx:1.2.1")
+          }
+          EOF
+
+          cat << 'EOF' > app/src/main/res/values/strings.xml
+          <resources>
+              <string name="app_name">iRec Studio</string>
+              <string name="accessibility_service_desc">Detects browser apps to animate the Dynamic Island privacy dot</string>
+          </resources>
+          EOF
+
+          cat << 'EOF' > app/src/main/res/xml/accessibility_config.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+              android:accessibilityEventTypes="typeWindowStateChanged"
+              android:accessibilityFeedbackType="feedbackGeneric"
+              android:accessibilityFlags="flagDefault"
+              android:canRetrieveWindowContent="false"
+              android:description="@string/accessibility_service_desc"
+              android:notificationTimeout="100" />
+          EOF
+
+          cat << 'EOF' > app/src/main/AndroidManifest.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+              <uses-permission android:name="android.permission.RECORD_AUDIO" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+              <application
+                  android:allowBackup="true"
+                  android:icon="@android:drawable/sym_def_app_icon"
+                  android:label="@string/app_name"
+                  android:theme="@android:style/Theme.Material.NoActionBar">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+
+                  <service
+                      android:name=".service.OverlayStatusBarService"
+                      android:exported="false"
+                      android:foregroundServiceType="specialUse">
+                      <property
+                          android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                          android:value="Status bar and Dynamic Island overlay" />
+                  </service>
+
+                  <service
+                      android:name=".service.ScreenRecordService"
+                      android:exported="false"
+                      android:foregroundServiceType="mediaProjection|microphone" />
+
+                  <service
+                      android:name=".service.BrowserAccessibilityService"
+                      android:exported="false"
+                      android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+                      <intent-filter>
+                          <action android:name="android.accessibilityservice.AccessibilityService" />
+                      </intent-filter>
+                      <meta-data
+                          android:name="android.accessibilityservice"
+                          android:resource="@xml/accessibility_config" />
+                  </service>
+              </application>
+          </manifest>
+          EOF
+
+          cat << 'EOF' > app/src/main/java/com/irecstudio/state/OverlayStateHolder.kt
+          package com.irecstudio.state
+
+          import kotlinx.coroutines.flow.MutableStateFlow
+          import kotlinx.coroutines.flow.StateFlow
+          import kotlinx.coroutines.flow.asStateFlow
+          import kotlinx.coroutines.flow.update
+
+          data class OverlayUiState(
+              val overlayRunning: Boolean = false,
+              val showIsland: Boolean = true,
+              val showStatusBar: Boolean = true,
+              val isRecording: Boolean = false,
+              val elapsedSeconds: Int = 0,
+              val micEnabled: Boolean = true,
+              val isBrowserActive: Boolean = false,
+              val wifiOn: Boolean = true,
+              val batteryLevel: Int = 85,
+              val showBatteryPercent: Boolean = false,
+              val expanded: Boolean = false
+          )
+
+          object OverlayStateHolder {
+              private val _state = MutableStateFlow(OverlayUiState())
+              val state: StateFlow<OverlayUiState> = _state.asStateFlow()
+
+              var onStopRecordingRequested: (() -> Unit)? = null
+
+              fun setOverlayRunning(running: Boolean) = _state.update { it.copy(overlayRunning = running) }
+              fun toggleIsland() = _state.update { it.copy(showIsland = !it.showIsland) }
+              fun toggleStatusBar() = _state.update { it.copy(showStatusBar = !it.showStatusBar) }
+              fun toggleMic() = _state.update { it.copy(micEnabled = !it.micEnabled) }
+              fun toggleWifi() = _state.update { it.copy(wifiOn = !it.wifiOn) }
+              fun toggleBatteryPercent() = _state.update { it.copy(showBatteryPercent = !it.showBatteryPercent) }
+              fun toggleExpanded() = _state.update { it.copy(expanded = !it.expanded) }
+              fun setBrowserActive(active: Boolean) = _state.update { it.copy(isBrowserActive = active) }
+              fun setRecording(recording: Boolean, elapsed: Int = 0) = _state.update {
+                  it.copy(isRecording = recording, elapsedSeconds = elapsed)
+              }
+              fun updateElapsed(seconds: Int) = _state.update { it.copy(elapsedSeconds = seconds) }
+              fun updateBattery(level: Int) = _state.update { it.copy(batteryLevel = level.coerceIn(1, 100)) }
+          }
+          EOF
+
+          cat << 'EOF' > app/src/main/java/com/irecstudio/ui/DynamicStatusOverlay.kt
+          package com.irecstudio.ui
+
+          import androidx.compose.animation.AnimatedVisibility
+          import androidx.compose.animation.animateColorAsState
+          import androidx.compose.animation.core.Spring
+          import androidx.compose.animation.core.animateDpAsState
+          import androidx.compose.animation.core.spring
+          import androidx.compose.foundation.background
+          import androidx.compose.foundation.border
+          import androidx.compose.foundation.clickable
+          import androidx.compose.foundation.layout.*
+          import androidx.compose.foundation.shape.CircleShape
+          import androidx.compose.foundation.shape.RoundedCornerShape
+          import androidx.compose.material3.Text
+          import androidx.compose.runtime.*
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.draw.clip
+          import androidx.compose.ui.graphics.Color
+          import androidx.compose.ui.text.font.FontWeight
+          import androidx.compose.ui.unit.dp
+          import androidx.compose.ui.unit.sp
+          import com.irecstudio.state.OverlayStateHolder
+          import com.irecstudio.state.OverlayUiState
+          import java.text.SimpleDateFormat
+          import java.util.*
+          import kotlinx.coroutines.delay
+
+          @Composable
+          fun DynamicStatusOverlay(state: OverlayUiState) {
+              if (!state.showIsland && !state.showStatusBar && !state.isRecording) return
+
+              var clockText by remember { mutableStateOf("") }
+              LaunchedEffect(Unit) {
+                  val fmt = SimpleDateFormat("h:mm", Locale.US)
+                  while (true) {
+                      clockText = fmt.format(Date())
+                      delay(10_000)
+                  }
+              }
+
+              val micOutside = state.isRecording && state.isBrowserActive
+              val statusBg by animateColorAsState(
+                  targetValue = if (micOutside) Color(0xFFF2F3F6) else Color(0xFF0A0C12),
+                  label = "statusBg"
+              )
+              val fgColor = if (micOutside) Color(0xFF0F172A) else Color.White
+
+              val timerText = remember(state.elapsedSeconds) {
+                  val m = state.elapsedSeconds / 60
+                  val s = state.elapsedSeconds % 60
+                  String.format(Locale.US, "%02d:%02d", m, s)
+              }
+
+              Column(
+                  modifier = Modifier.fillMaxWidth(),
+                  horizontalAlignment = Alignment.CenterHorizontally
+              ) {
+                  if (state.showStatusBar) {
+                      Box(
+                          modifier = Modifier
+                              .fillMaxWidth()
+                              .heightIn(min = 42.dp)
+                              .background(statusBg)
+                              .padding(horizontal = 16.dp, vertical = 6.dp)
+                      ) {
+                          Row(
+                              modifier = Modifier
+                                  .align(Alignment.CenterStart)
+                                  .clickable { OverlayStateHolder.toggleExpanded() },
+                              verticalAlignment = Alignment.CenterVertically,
+                              horizontalArrangement = Arrangement.spacedBy(6.dp)
+                          ) {
+                              if (!state.showIsland && state.isRecording) {
+                                  Box(
+                                      modifier = Modifier
+                                          .size(8.dp)
+                                          .clip(CircleShape)
+                                          .background(Color(0xFFFF3B30))
+                                  )
+                              }
+                              Text(
+                                  text = if (state.isRecording) timerText else clockText,
+                                  color = fgColor,
+                                  fontSize = 14.sp,
+                                  fontWeight = FontWeight.SemiBold
+                              )
+                          }
+
+                          if (state.showIsland) {
+                              Box(modifier = Modifier.align(Alignment.Center)) {
+                                  IslandPill(state = state, micOutside = micOutside)
+                              }
+                          }
+
+                          Row(
+                              modifier = Modifier.align(Alignment.CenterEnd),
+                              verticalAlignment = Alignment.CenterVertically,
+                              horizontalArrangement = Arrangement.spacedBy(8.dp)
+                          ) {
+                              if (!state.showIsland && state.micEnabled) {
+                                  Box(
+                                      modifier = Modifier
+                                          .size(7.dp)
+                                          .clip(CircleShape)
+                                          .background(Color(0xFFFF9F0A))
+                                  )
+                              }
+                              if (state.wifiOn) {
+                                  Text(text = "Wi-Fi", color = fgColor, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                              }
+                              Box(
+                                  modifier = Modifier
+                                      .border(1.2.dp, fgColor.copy(alpha = 0.65f), RoundedCornerShape(4.dp))
+                                      .padding(horizontal = 5.dp, vertical = 1.dp)
+                              ) {
+                                  Text(
+                                      text = if (state.showBatteryPercent) "${state.batteryLevel}%" else "  ",
+                                      color = fgColor,
+                                      fontSize = 10.sp,
+                                      fontWeight = FontWeight.Bold
+                                  )
+                              }
+                          }
+                      }
+                  } else if (state.showIsland) {
+                      Box(modifier = Modifier.padding(top = 6.dp)) {
+                          IslandPill(state = state, micOutside = micOutside)
+                      }
+                  } else if (state.isRecording) {
+                      Row(
+                          modifier = Modifier
+                              .padding(top = 6.dp)
+                              .clip(CircleShape)
+                              .background(Color(0xE612141C))
+                              .clickable { OverlayStateHolder.toggleExpanded() }
+                              .padding(horizontal = 14.dp, vertical = 6.dp),
+                          verticalAlignment = Alignment.CenterVertically,
+                          horizontalArrangement = Arrangement.spacedBy(8.dp)
+                      ) {
+                          Box(Modifier.size(8.dp).clip(CircleShape).background(Color(0xFFFF3B30)))
+                          Text(text = timerText, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                      }
+                  }
+
+                  AnimatedVisibility(visible = state.expanded) {
+                      Row(
+                          modifier = Modifier
+                              .padding(top = 6.dp)
+                              .clip(RoundedCornerShape(24.dp))
+                              .background(Color.Black)
+                              .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(24.dp))
+                              .padding(horizontal = 14.dp, vertical = 10.dp),
+                          verticalAlignment = Alignment.CenterVertically,
+                          horizontalArrangement = Arrangement.spacedBy(10.dp)
+                      ) {
+                          Text(
+                              text = if (state.isRecording) "REC $timerText" else "iRec Ready",
+                              color = Color.White,
+                              fontSize = 12.sp,
+                              fontWeight = FontWeight.SemiBold
+                          )
+                          Box(
+                              modifier = Modifier
+                                  .clip(RoundedCornerShape(14.dp))
+                                  .background(if (state.micEnabled) Color(0xFFFF9F0A) else Color(0xFF2C2F3A))
+                                  .clickable { OverlayStateHolder.toggleMic() }
+                                  .padding(horizontal = 10.dp, vertical = 6.dp)
+                          ) {
+                              Text(
+                                  text = if (state.micEnabled) "Mic On" else "Mic Off",
+                                  color = if (state.micEnabled) Color.Black else Color.White,
+                                  fontSize = 11.sp,
+                                  fontWeight = FontWeight.Bold
+                              )
+                          }
+                          if (state.isRecording) {
+                              Box(
+                                  modifier = Modifier
+                                      .clip(RoundedCornerShape(14.dp))
+                                      .background(Color(0xFFFF3B30))
+                                      .clickable {
+                                          OverlayStateHolder.toggleExpanded()
+                                          OverlayStateHolder.onStopRecordingRequested?.invoke()
+                                      }
+                                      .padding(horizontal = 10.dp, vertical = 6.dp)
+                              ) {
+                                  Text(text = "Stop", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                              }
+                          }
+                      }
+                  }
+              }
+          }
+
+          @Composable
+          private fun IslandPill(state: OverlayUiState, micOutside: Boolean) {
+              val dotOffset by animateDpAsState(
+                  targetValue = if (micOutside) 14.dp else 0.dp,
+                  animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = 0.75f),
+                  label = "micDot"
+              )
+              Row(verticalAlignment = Alignment.CenterVertically) {
+                  Row(
+                      modifier = Modifier
+                          .width(126.dp)
+                          .height(32.dp)
+                          .clip(CircleShape)
+                          .background(Color.Black)
+                          .border(1.dp, Color.White.copy(alpha = 0.14f), CircleShape)
+                          .clickable { OverlayStateHolder.toggleExpanded() }
+                          .padding(horizontal = 12.dp),
+                      verticalAlignment = Alignment.CenterVertically,
+                      horizontalArrangement = Arrangement.SpaceBetween
+                  ) {
+                      Box(
+                          modifier = Modifier
+                              .size(11.dp)
+                              .clip(CircleShape)
+                              .background(Color(0xFFFF3B30))
+                      )
+                      if (state.micEnabled && !micOutside) {
+                          Box(
+                              modifier = Modifier
+                                  .size(6.dp)
+                                  .clip(CircleShape)
+                                  .background(Color(0xFFFF9F0A))
+                          )
+                      }
+                  }
+                  if (state.micEnabled && micOutside) {
+                      Spacer(modifier = Modifier.width(6.dp))
+                      Box(
+                          modifier = Modifier
+                              .offset(x = dotOffset - 14.dp)
+                              .size(9.dp)
+                              .clip(CircleShape)
+                              .background(Color(0xFFFF9F0A))
+                              .border(1.5.dp, Color.Black, CircleShape)
+                      )
+                  }
+              }
+          }
+          EOF
+
+          cat << 'EOF' > app/src/main/java/com/irecstudio/service/OverlayStatusBarService.kt
+          package com.irecstudio.service
+
+          import android.app.NotificationChannel
+          import android.app.NotificationManager
+          import android.content.Intent
+          import android.content.pm.ServiceInfo
+          import android.graphics.PixelFormat
+          import android.os.BatteryManager
+          import android.os.Build
+          import android.view.Gravity
+          import android.view.WindowManager
+          import androidx.compose.runtime.collectAsState
+          import androidx.compose.runtime.getValue
+          import androidx.compose.ui.platform.ComposeView
+          import androidx.core.app.NotificationCompat
+          import androidx.core.app.ServiceCompat
+          import androidx.lifecycle.LifecycleService
+          import androidx.lifecycle.setViewTreeLifecycleOwner
+          import androidx.savedstate.SavedStateRegistry
+          import androidx.savedstate.SavedStateRegistryController
+          import androidx.savedstate.SavedStateRegistryOwner
+          import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+          import com.irecstudio.state.OverlayStateHolder
+          import com.irecstudio.ui.DynamicStatusOverlay
+
+          class OverlayStatusBarService : LifecycleService(), SavedStateRegistryOwner {
+
+              private val savedStateController = SavedStateRegistryController.create(this)
+              override val savedStateRegistry: SavedStateRegistry
+                  get() = savedStateController.savedStateRegistry
+
+              private lateinit var windowManager: WindowManager
+              private var overlayView: ComposeView? = null
+
+              override fun onCreate() {
+                  super.onCreate()
+                  savedStateController.performRestore(null)
+                  startOverlayForeground()
+
+                  val bm = getSystemService(BATTERY_SERVICE) as BatteryManager
+                  val pct = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+                  if (pct in 1..100) OverlayStateHolder.updateBattery(pct)
+
+                  windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+                  val params = WindowManager.LayoutParams(
+                      WindowManager.LayoutParams.MATCH_PARENT,
+                      WindowManager.LayoutParams.WRAP_CONTENT,
+                      WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                      WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                          WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                          WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                          WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                      PixelFormat.TRANSLUCENT
+                  ).apply {
+                      gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                          layoutInDisplayCutoutMode =
+                              WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                      }
+                  }
+
+                  val view = ComposeView(this).apply {
+                      setViewTreeLifecycleOwner(this@OverlayStatusBarService)
+                      setViewTreeSavedStateRegistryOwner(this@OverlayStatusBarService)
+                      setContent {
+                          val uiState by OverlayStateHolder.state.collectAsState()
+                          DynamicStatusOverlay(state = uiState)
+                      }
+                  }
+                  overlayView = view
+                  windowManager.addView(view, params)
+                  OverlayStateHolder.setOverlayRunning(true)
+              }
+
+              private fun startOverlayForeground() {
+                  val chId = "irec_overlay"
+                  val nm = getSystemService(NotificationManager::class.java)
+                  nm.createNotificationChannel(
+                      NotificationChannel(chId, "iRec Status Overlay", NotificationManager.IMPORTANCE_LOW)
+                  )
+                  val notif = NotificationCompat.Builder(this, chId)
+                      .setContentTitle("iRec Studio Overlay Active")
+                      .setSmallIcon(android.R.drawable.presence_video_online)
+                      .build()
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                      ServiceCompat.startForeground(this, 101, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+                  } else {
+                      startForeground(101, notif)
+                  }
+              }
+
+              override fun onDestroy() {
+                  overlayView?.let { windowManager.removeView(it) }
+                  overlayView = null
+                  OverlayStateHolder.setOverlayRunning(false)
+                  super.onDestroy()
+              }
+
+              override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+                  return super.onStartCommand(intent, flags, startId)
+              }
+          }
+          EOF
+
+          cat << 'EOF' > app/src/main/java/com/irecstudio/service/BrowserAccessibilityService.kt
+          package com.irecstudio.service
+
+          import android.accessibilityservice.AccessibilityService
+          import android.view.accessibility.AccessibilityEvent
+          import com.irecstudio.state.OverlayStateHolder
+
+          class BrowserAccessibilityService : AccessibilityService() {
+
+              private val browserPackages = setOf(
+                  "com.android.chrome",
+                  "com.chrome.beta",
+                  "com.sec.android.app.sbrowser",
+                  "org.mozilla.firefox",
+                  "com.brave.browser",
+                  "com.opera.browser",
+                  "com.microsoft.emmx"
+              )
+
+              override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+                  if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+                      val pkg = event.packageName?.toString() ?: return
+                      if (pkg == "com.android.systemui") return
+                      OverlayStateHolder.setBrowserActive(pkg in browserPackages)
+                  }
+              }
+
+              override fun onInterrupt() {}
+          }
+          EOF
+
+          cat << 'EOF' > app/src/main/java/com/irecstudio/service/ScreenRecordService.kt
+          package com.irecstudio.service
+
+          import android.Manifest
+          import android.app.Activity
+          import android.app.NotificationChannel
+          import android.app.NotificationManager
+          import android.app.Service
+          import android.content.ContentValues
+          import android.content.Intent
+          import android.content.pm.PackageManager
+          import android.content.pm.ServiceInfo
+          import android.hardware.display.DisplayManager
+          import android.hardware.display.VirtualDisplay
+          import android.media.MediaRecorder
+          import android.media.projection.MediaProjection
+          import android.media.projection.MediaProjectionManager
+          import android.os.Build
+          import android.os.Environment
+          import android.os.Handler
+          import android.os.IBinder
+          import android.os.Looper
+          import android.provider.MediaStore
+          import android.util.DisplayMetrics
+          import android.view.WindowManager
+          import androidx.core.app.NotificationCompat
+          import androidx.core.app.ServiceCompat
+          import androidx.core.content.ContextCompat
+          import com.irecstudio.state.OverlayStateHolder
+          import java.io.File
+
+          class ScreenRecordService : Service() {
+
+              private var projection: MediaProjection? = null
+              private var virtualDisplay: VirtualDisplay? = null
+              private var recorder: MediaRecorder? = null
+              private var tempFile: File? = null
+              private val handler = Handler(Looper.getMainLooper())
+              private var seconds = 0
+
+              private val tickRunnable = object : Runnable {
+                  override fun run() {
+                      seconds++
+                      OverlayStateHolder.updateElapsed(seconds)
+                      handler.postDelayed(this, 1000)
+                  }
+              }
+
+              override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+                  if (intent?.action == "STOP_RECORDING") {
+                      stopAndSaveToGallery()
+                      return START_NOT_STICKY
+                  }
+
+                  val hasMicPerm = ContextCompat.checkSelfPermission(
+                      this,
+                      Manifest.permission.RECORD_AUDIO
+                  ) == PackageManager.PERMISSION_GRANTED
+                  val useMic = OverlayStateHolder.state.value.micEnabled && hasMicPerm
+
+                  startRecForeground(useMic)
+
+                  val resultCode = intent?.getIntExtra("RESULT_CODE", Activity.RESULT_CANCELED)
+                      ?: Activity.RESULT_CANCELED
+                  val dataIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                      intent?.getParcelableExtra("DATA_INTENT", Intent::class.java)
+                  } else {
+                      @Suppress("DEPRECATION")
+                      intent?.getParcelableExtra("DATA_INTENT")
+                  }
+
+                  if (resultCode != Activity.RESULT_OK || dataIntent == null) {
+                      stopSelf()
+                      return START_NOT_STICKY
+                  }
+
+                  val mpm = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                  val mp = mpm.getMediaProjection(resultCode, dataIntent)
+                  mp.registerCallback(object : MediaProjection.Callback() {
+                      override fun onStop() {
+                          stopAndSaveToGallery()
+                      }
+                  }, handler)
+                  projection = mp
+
+                  val wm = getSystemService(WINDOW_SERVICE) as WindowManager
+                  val metrics = DisplayMetrics()
+                  @Suppress("DEPRECATION")
+                  wm.defaultDisplay.getRealMetrics(metrics)
+                  val width = (metrics.widthPixels / 2) * 2
+                  val height = (metrics.heightPixels / 2) * 2
+                  val dpi = metrics.densityDpi
+
+                  val outFile = File(cacheDir, "irec_${System.currentTimeMillis()}.mp4")
+                  tempFile = outFile
+
+                  val rec = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                      MediaRecorder(this)
+                  } else {
+                      @Suppress("DEPRECATION")
+                      MediaRecorder()
+                  }
+
+                  rec.apply {
+                      if (useMic) {
+                          setAudioSource(MediaRecorder.AudioSource.MIC)
+                      }
+                      setVideoSource(MediaRecorder.VideoSource.SURFACE)
+                      setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                      setVideoEncoder(MediaRecorder.VideoEncoder.H264)
+                      setVideoSize(width, height)
+                      setVideoFrameRate(60)
+                      setVideoEncodingBitRate(8_000_000)
+                      if (useMic) {
+                          setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                          setAudioSamplingRate(44100)
+                          setAudioEncodingBitRate(128_000)
+                      }
+                      setOutputFile(outFile.absolutePath)
+                      prepare()
+                  }
+                  recorder = rec
+
+                  virtualDisplay = mp.createVirtualDisplay(
+                      "iRecDisplay",
+                      width,
+                      height,
+                      dpi,
+                      DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                      rec.surface,
+                      null,
+                      null
+                  )
+
+                  rec.start()
+                  seconds = 0
+                  OverlayStateHolder.setRecording(true, 0)
+                  OverlayStateHolder.onStopRecordingRequested = { stopAndSaveToGallery() }
+                  handler.postDelayed(tickRunnable, 1000)
+                  return START_STICKY
+              }
+
+              private fun stopAndSaveToGallery() {
+                  handler.removeCallbacks(tickRunnable)
+                  OverlayStateHolder.onStopRecordingRequested = null
+                  OverlayStateHolder.setRecording(false, 0)
+
+                  runCatching { recorder?.stop() }
+                  runCatching { recorder?.release() }
+                  recorder = null
+                  virtualDisplay?.release()
+                  virtualDisplay = null
+                  projection?.stop()
+                  projection = null
+
+                  val file = tempFile
+                  tempFile = null
+                  if (file != null && file.exists() && file.length() > 0) {
+                      val values = ContentValues().apply {
+                          put(MediaStore.Video.Media.DISPLAY_NAME, "iRec_${System.currentTimeMillis()}.mp4")
+                          put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                          put(MediaStore.Video.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MOVIES}/iRecStudio")
+                          put(MediaStore.Video.Media.IS_PENDING, 1)
+                      }
+                      val uri = contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
+                      if (uri != null) {
+                          contentResolver.openOutputStream(uri)?.use { out ->
+                              file.inputStream().use { it.copyTo(out) }
+                          }
+                          values.clear()
+                          values.put(MediaStore.Video.Media.IS_PENDING, 0)
+                          contentResolver.update(uri, values, null, null)
+                      }
+                      file.delete()
+                  }
+                  stopSelf()
+              }
+
+              private fun startRecForeground(useMic: Boolean) {
+                  val chId = "irec_record"
+                  val nm = getSystemService(NotificationManager::class.java)
+                  nm.createNotificationChannel(
+                      NotificationChannel(chId, "iRec Screen Recorder", NotificationManager.IMPORTANCE_LOW)
+                  )
+                  val notif = NotificationCompat.Builder(this, chId)
+                      .setContentTitle("Recording Screen...")
+                      .setSmallIcon(android.R.drawable.presence_video_busy)
+                      .build()
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                      val fgsType = if (useMic && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                          ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                      } else {
+                          ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                      }
+                      ServiceCompat.startForeground(this, 102, notif, fgsType)
+                  } else {
+                      startForeground(102, notif)
+                  }
+              }
+
+              override fun onBind(intent: Intent?): IBinder? = null
+          }
+          EOF
+
+          cat << 'EOF' > app/src/main/java/com/irecstudio/MainActivity.kt
+          package com.irecstudio
+
+          import android.Manifest
+          import android.content.Intent
+          import android.media.projection.MediaProjectionManager
+          import android.net.Uri
+          import android.os.Build
+          import android.os.Bundle
+          import android.provider.Settings
+          import androidx.activity.ComponentActivity
+          import androidx.activity.compose.setContent
+          import androidx.activity.result.contract.ActivityResultContracts
+          import androidx.compose.foundation.background
+          import androidx.compose.foundation.layout.*
+          import androidx.compose.foundation.shape.RoundedCornerShape
+          import androidx.compose.material3.*
+          import androidx.compose.runtime.collectAsState
+          import androidx.compose.runtime.getValue
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.graphics.Color
+          import androidx.compose.ui.text.font.FontWeight
+          import androidx.compose.ui.unit.dp
+          import androidx.compose.ui.unit.sp
+          import com.irecstudio.service.OverlayStatusBarService
+          import com.irecstudio.service.ScreenRecordService
+          import com.irecstudio.state.OverlayStateHolder
+
+          class MainActivity : ComponentActivity() {
+
+              private val permLauncher = registerForActivityResult(
+                  ActivityResultContracts.RequestMultiplePermissions()
+              ) {}
+
+              private val projLauncher = registerForActivityResult(
+                  ActivityResultContracts.StartActivityForResult()
+              ) { res ->
+                  if (res.resultCode == RESULT_OK && res.data != null) {
+                      val svc = Intent(this, ScreenRecordService::class.java).apply {
+                          putExtra("RESULT_CODE", res.resultCode)
+                          putExtra("DATA_INTENT", res.data)
+                      }
+                      startForegroundService(svc)
+                  }
+              }
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+
+                  val perms = mutableListOf(Manifest.permission.RECORD_AUDIO)
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                      perms.add(Manifest.permission.POST_NOTIFICATIONS)
+                  }
+                  permLauncher.launch(perms.toTypedArray())
+
+                  setContent {
+                      val uiState by OverlayStateHolder.state.collectAsState()
+                      Column(
+                          modifier = Modifier
+                              .fillMaxSize()
+                              .background(Color(0xFF090A0F))
+                              .systemBarsPadding()
+                              .padding(20.dp),
+                          verticalArrangement = Arrangement.spacedBy(14.dp)
+                      ) {
+                          Text("iRec Studio", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+
+                          Row(
+                              modifier = Modifier.fillMaxWidth(),
+                              horizontalArrangement = Arrangement.SpaceBetween,
+                              verticalAlignment = Alignment.CenterVertically
+                          ) {
+                              Text("Dynamic Island", color = Color.White)
+                              Switch(checked = uiState.showIsland, onCheckedChange = { OverlayStateHolder.toggleIsland() })
+                          }
+
+                          Row(
+                              modifier = Modifier.fillMaxWidth(),
+                              horizontalArrangement = Arrangement.SpaceBetween,
+                              verticalAlignment = Alignment.CenterVertically
+                          ) {
+                              Text("পূর্ণ স্ট্যাটাস বার", color = Color.White)
+                              Switch(checked = uiState.showStatusBar, onCheckedChange = { OverlayStateHolder.toggleStatusBar() })
+                          }
+
+                          Row(
+                              modifier = Modifier.fillMaxWidth(),
+                              horizontalArrangement = Arrangement.SpaceBetween,
+                              verticalAlignment = Alignment.CenterVertically
+                          ) {
+                              Text("মাইক্রোফোন", color = Color.White)
+                              Switch(checked = uiState.micEnabled, onCheckedChange = { OverlayStateHolder.toggleMic() })
+                          }
+
+                          Row(
+                              modifier = Modifier.fillMaxWidth(),
+                              horizontalArrangement = Arrangement.SpaceBetween,
+                              verticalAlignment = Alignment.CenterVertically
+                          ) {
+                              Text("ব্যাটারি %", color = Color.White)
+                              Switch(checked = uiState.showBatteryPercent, onCheckedChange = { OverlayStateHolder.toggleBatteryPercent() })
+                          }
+
+                          Button(
+                              onClick = {
+                                  if (!Settings.canDrawOverlays(this@MainActivity)) {
+                                      startActivity(
+                                          Intent(
+                                              Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                              Uri.parse("package:$packageName")
+                                          )
+                                      )
+                                  } else if (uiState.overlayRunning) {
+                                      stopService(Intent(this@MainActivity, OverlayStatusBarService::class.java))
+                                  } else {
+                                      startForegroundService(Intent(this@MainActivity, OverlayStatusBarService::class.java))
+                                  }
+                              },
+                              modifier = Modifier.fillMaxWidth(),
+                              shape = RoundedCornerShape(14.dp)
+                          ) {
+                              Text(if (uiState.overlayRunning) "স্ট্যাটাস বার ওভারলে বন্ধ করুন" else "স্ট্যাটাস বার ওভারলে চালু করুন")
+                          }
+
+                          OutlinedButton(
+                              onClick = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
+                              modifier = Modifier.fillMaxWidth(),
+                              shape = RoundedCornerShape(14.dp)
+                          ) {
+                              Text("ব্রাউজার ডিটেকশন (Accessibility) অন করুন", color = Color.White)
+                          }
+
+                          Button(
+                              onClick = {
+                                  if (uiState.isRecording) {
+                                      startService(Intent(this@MainActivity, ScreenRecordService::class.java).apply {
+                                          action = "STOP_RECORDING"
+                                      })
+                                  } else {
+                                      val mpm = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                                      projLauncher.launch(mpm.createScreenCaptureIntent())
+                                  }
+                              },
+                              colors = ButtonDefaults.buttonColors(
+                                  containerColor = if (uiState.isRecording) Color(0xFFFF3B30) else Color(0xFF30D158)
+                              ),
+                              modifier = Modifier.fillMaxWidth(),
+                              shape = RoundedCornerShape(14.dp)
+                          ) {
+                              Text(
+                                  if (uiState.isRecording) "রেকর্ডিং বন্ধ করুন" else "স্ক্রিন রেকর্ডিং শুরু করুন",
+                                  color = Color.Black,
+                                  fontWeight = FontWeight.Bold
+                              )
+                          }
+                      }
+                  }
+              }
+          }
+          EOF
+
       - name: Build Debug APK
         run: gradle assembleDebug
+
       - uses: actions/upload-artifact@v4
         with:
           name: iRecStudio-debug-apk
